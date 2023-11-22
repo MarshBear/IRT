@@ -1,0 +1,353 @@
+# Score Analysis
+
+## Data & Packages
+
+
+```{r, message=FALSE, results='hide'}
+list.of.packages <- c("mirt", "ltm", "TAM", "dplyr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
+lapply(list.of.packages, library, character.only = TRUE)
+
+score <- read.csv('正式测试/score.csv')
+score.pre <- score[2:5]
+score.mid1 <- score[6:9]
+score.mid2 <- score[10:13]
+score.post <- score[14:17]
+```
+
+
+做联结（linking）思路：同一组被试（能力相同）做三组试卷。`linking.csv`存储了三套卷子在同一组被试下的结果，实测中前测和后测使用Q1，两次中测分别使用Q2和Q3。
+
+```{r}
+linking <- read.csv('正式测试/linking.csv')
+linking.q1 <- score[2:5]
+linking.q2 <- score[6:9]
+linking.q3 <- score[10:13]
+```
+
+
+## GRM
+
+对于pre和post，将两组数据整合后统一调用GRM模型，随后再将被试参数分成两组。对于两次中测则保留原始结构。
+```{r}
+names(score.pre) <- c("T1", "T2", "T3", "T4")
+names(score.post) <- c("T1", "T2", "T3", "T4")
+```
+
+```{r, message=FALSE, results='hide'}
+grm.pre.post <- mirt(data = rbind(score.pre, score.post), itemtype = rep("graded",4))
+grm.theta.preNpost <- fscores(grm.pre.post) # 被试参数估计
+grm.theta.pre <- grm.theta.preNpost[1:40]
+grm.theta.post <- grm.theta.preNpost[41:80]
+grm.coef.pre <- coef(grm.pre.post, IRTpars=T)  # 项目参数估计
+grm.coef.post <- coef(grm.pre.post, IRTpars=T)
+
+grm.mid1 <- mirt(data = score.mid1, itemtype = rep("graded",4))
+grm.theta.mid1 <- fscores(grm.mid1) 
+
+grm.mid2 <- mirt(data = score.mid2, itemtype = rep("graded",4))
+grm.theta.mid2 <- fscores(grm.mid2) 
+```
+
+
+
+```{r}
+itemplot(grm.pre.post,item = 1,theta_lim = c(-3,3),type = "trace")
+itemplot(grm.pre.post,item = 2,theta_lim = c(-3,3),type = "trace")
+itemplot(grm.pre.post,item = 3,theta_lim = c(-3,3),type = "trace")
+itemplot(grm.pre.post,item = 4,theta_lim = c(-3,3),type = "trace")
+```
+
+```{r}
+plot(grm.pre.post) # 期望总分
+```
+
+linking部分，先计算linking数据的参数
+```{r, message=FALSE, results='hide'}
+grm.q1 <- mirt(data = linking.q1, itemtype = rep("graded",4))
+grm.q2 <- mirt(data = linking.q2, itemtype = rep("graded",4))
+grm.q3 <- mirt(data = linking.q3, itemtype = rep("graded",4))
+
+grm.theta.q1 <- fscores(grm.q1)
+grm.theta.q2 <- fscores(grm.q2)
+grm.theta.q3 <- fscores(grm.q3)
+```
+
+linking应当服从变换：
+$$
+\theta_1 = A_{k}\theta_k+B_{k}
+$$
+其中，$k=2,3$且变换参数满足：
+$$
+A_k=\frac{\sigma(\theta_1)}{\sigma(\theta_k)},\\
+B_k=\mu(\theta_1)-A_k\mu(\theta_k)
+$$
+
+```{r}
+sigma1 <- sd(grm.theta.q1)
+sigma2 <- sd(grm.theta.q2)
+sigma3 <- sd(grm.theta.q3)
+
+mu1 <- mean(grm.theta.q1)
+mu2 <- mean(grm.theta.q2)
+mu3 <- mean(grm.theta.q3)
+
+A2 <- sigma1/sigma2
+B2 <- mu1 - A2*mu2
+A3 <- sigma1/sigma3
+B3 <- mu1 - A3*mu3
+```
+
+最后对于测量数据做linking，全部都以卷1为标准：
+ 
+```{r}
+grm.theta.pre.linked <- grm.theta.pre
+grm.theta.mid1.linked <- A2 * grm.theta.mid1 + B2
+grm.theta.mid2.linked <- A3 * grm.theta.mid2 + B3
+grm.theta.post.linked <- grm.theta.post
+
+
+grm.theta <- cbind(grm.theta.pre.linked, grm.theta.mid1.linked, grm.theta.mid2.linked, grm.theta.post.linked)
+write.csv(grm.theta, "正式测试/result.csv")
+```
+
+## GPCM
+
+```{r, message=FALSE, results='hide'}
+gpcm.pre <- mirt(data = score.pre, itemtype = rep("gpcm",4))
+gpcm.theta.pre <- fscores(gpcm.pre) # 被试参数估计
+gpcm.coef.pre <- coef(gpcm.pre, IRTpars=T)  # 项目参数估计
+```
+
+```{r}
+itemplot(gpcm.pre,item = 1,theta_lim = c(-3,3),type = "trace")
+itemplot(gpcm.pre,item = 2,theta_lim = c(-3,3),type = "trace")
+itemplot(gpcm.pre,item = 3,theta_lim = c(-3,3),type = "trace")
+itemplot(gpcm.pre,item = 4,theta_lim = c(-3,3),type = "trace")
+```
+```{r}
+plot(gpcm.pre)
+```
+
+
+
+## PCM
+
+```{r, message=FALSE, results='hide'}
+pcm.pre <- mirt(data = score.pre, itemtype = rep("Rasch",4))
+pcm.theta.pre <- fscores(pcm.pre) # 被试参数估计
+pcm.coef.pre <- coef(pcm.pre, IRTpars=T)  # 项目参数估计
+```
+
+
+
+```{r}
+itemplot(pcm.pre,item = 1,theta_lim = c(-3,3),type = "trace")
+itemplot(pcm.pre,item = 2,theta_lim = c(-3,3),type = "trace")
+itemplot(pcm.pre,item = 3,theta_lim = c(-3,3),type = "trace")
+itemplot(pcm.pre,item = 4,theta_lim = c(-3,3),type = "trace")
+```
+```{r}
+plot(pcm.pre) # 期望总分
+```
+
+## MFRM
+```{r}
+mfr.pre <- tam.mml.mfr(score.pre)
+```
+
+
+
+
+
+
+$$
+\theta_2 = \frac{\sigma(\theta_2)}{\sigma(\theta_1)}\theta_1+\mu(\theta_2)-\frac{\sigma(\theta_2)}{\sigma(\theta_1)}\mu(\theta_1)
+$$
+$$
+\theta_3 = \frac{\sigma(\theta_3)}{\sigma(\theta_2)}\theta_2+\mu(\theta_3)-\frac{\sigma(\theta_3)}{\sigma(\theta_2)}\mu(\theta_2)\\
+=\frac{\sigma(\theta_3)}{\sigma(\theta_2)}
+\left[\frac{\sigma(\theta_2)}{\sigma(\theta_1)}\theta_1+\mu(\theta_2)-\frac{\sigma(\theta_2)}{\sigma(\theta_1)}\mu(\theta_1)\right]
++\mu(\theta_3)-\frac{\sigma(\theta_3)}{\sigma(\theta_2)}\mu(\theta_2)\\
+=\frac{\sigma(\theta_3)}{\sigma(\theta_1)}\theta_1+\mu(\theta_3)-\frac{\sigma(\theta_3)}{\sigma(\theta_1)}\mu(\theta_1)
+$$
+
+
+# Examples
+
+## Eg1. 知乎案例
+
+加载需要的包，其中：
+
+- `eRm`：**Extended Rasch Modeling** 用于构建Rasch模型
+- `difR`：读取数据
+
+```{r, message=FALSE, results='hide'}
+list.of.packages <- c("ltm", "difR", "eRm")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
+lapply(list.of.packages, library, character.only = TRUE)
+```
+
+数据采用`difR`包中的`verbal`数据，包含24个测试量和1个性别代码（不纳入考虑，故移除）
+
+```{r}
+data(verbal, package = "difR")
+exa.dat <- verbal[, 1:24]
+head(exa.dat)
+```
+
+调用模型`eRm::RM`函数构建 Rasch 模型，并检查其输出的$\beta$值，即对应于每个试题的难度系数
+
+```{r}
+res.rm <- RM(exa.dat)
+summary(res.rm)
+betas <- -coef(res.rm)
+round(sort(betas), 2)
+```
+
+绘制问题`"S2WantShout"`的项目特征曲线（ICC），并用灰线标注出拐点（$\beta$值所在点）
+
+```{r}
+plotICC(res.rm, item.subset = "S2WantShout")
+abline(v = -0.18, col = "grey")
+abline(h = .5, col = "grey")
+```
+
+对问题1-12和问题13-24分别绘制ICC，用以对比
+
+```{r}
+plotjointICC(res.rm, item.subset =  1:12, cex = .6) # cex参数调整图例大小，设为0.6倍
+plotjointICC(res.rm, item.subset = 13:24, cex = .6)
+```
+
+绘制人-问题对应图，上方直方图表示该能力值的人数，下方点图表示每个问题的能力值
+
+```{r}
+plotPImap(res.rm, cex.gen = .55, sorted = TRUE)
+```
+
+## Eg2. b站案例
+
+```{r, message=FALSE, results='hide'}
+list.of.packages <- c("eRm")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
+lapply(list.of.packages, library, character.only = TRUE)
+
+c2_rasch <- read.table('c2_rasch.dat')
+ras.model <- RM(c2_rasch)
+```
+
+绘制项目特征曲线
+
+```{r}
+plotICC(ras.model, empICC = list("raw"), item.subset = "V1") # 添加empICC项用于绘制点图
+abline(v = 0.47, col = "grey")
+abline(h = .5, col = "grey")
+plotjointICC(ras.model, item.subset = 1:5, cex = .6)
+```
+
+eRm提供了每个人的latent trait（能力分）的MLE：（总得分和相应的能力分的对照）
+
+```{r}
+personPara <- person.parameter(ras.model)
+personPara
+```
+
+## Eg3. Book *Rasch Measurement Theory Analysis in R*
+
+### MFRM (Multi-Facet Rasch Model)
+
+调用必要的包，其中:
+
+- `TAM`：调用MFEM模型
+- `WrightMap`：绘制怀特图
+- `psych`：获取心理测量数据
+
+```{r, message=FALSE, results='hide'}
+list.of.packages <- c("TAM", "WrightMap", "psych")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
+lapply(list.of.packages, library, character.only = TRUE)
+```
+
+
+
+
+# 一些理论说明
+
+Rasch模型可以看作是一个特殊的三参数比率模型（3-parameter logistic model），因此先介绍一下三参数比率模型的基本结构。
+
+## Three-Parameter Logistic Model
+
+模型的基本方程是：对于第$i$个人作答第$j$个问题，其答对的概率为 $$
+p_{ij}=p(\theta_i; a_j,b_j,c_j)=c_j+(1-c_j)\frac{\mathrm{exp}[Da_j(\theta_i-b_j)]}{1+\mathrm{exp}[Da_j(\theta_i-b_j)]}.
+$$ 将$\theta$视作连续自变量，$p_j(\theta)$的图像即为项目$j$的项目特征曲线（ICC）。
+
+其中包含四个量，$\theta_i\in(-\infty,+\infty)$用来描述第$i$个学生的能力水平，$a_j, b_j, c_j$是用来描述第$j$个问题的三个参数。每个参数说明：
+
+-   通常在做估计时，会事先假设$\theta$为标准正态分布，于是几乎所有人的$\theta$都应该在$(-3,3)$取值。
+-   $c_j$为$\theta\rightarrow-\infty$时的渐进值，即表示能力极低的学生做第$j$题时答对的概率，因此有时称为准运气参数或猜测度。
+-   $b_j$为难度，注意到$p_j(\theta)$图像上有一个拐点，该点即$\theta=b_j$点。该点可以描述为，当能力稍低于$b_j$时，答对该题的可能性较低；而当能力稍高于$b_j$时，答对该题的可能性骤升，即$b_j$是平均意义上刚好答对该题所需要的能力值。
+-   $a_j$为项目$j$的鉴别能力，其取值同特征曲线在$b_j$处的斜率成正比。当$a_j$越大，则特征曲线在$b_j$处更陡峭，能力稍微比$b_j$低一点点就几乎无法答对，能力比$b_j$高一点点就能答对，即项目$j$对能力的鉴别能力较强；当$a_j$较小时则反之。
+
+概率表达式中还有一个字母$D$，是归一化常数，可取定为$D=1.7$不去管他。
+
+## Classical Rasch Model
+
+对上述模型特殊化，令$c_j=0$，$a_j=1$即为Rasch模型。这是，归一化参数取定为$D=1$，文献中通常会把上述的难度参数$b_j$记作$\beta_j$或$\delta_j$。此时第$i$个人答对第$j$个问题的概率为 $$
+p_{ij}=\frac{\mathrm{exp}(\theta_i-\beta_j)}{1+\mathrm{exp}(\theta_i-\beta_j)}.
+$$ 即一个参数$\theta_i$表征能力，一个参数$\beta_j$表征题目难度，猜测度$c_j=0$即能力极低的人几乎不可能答对，且题目与题目间的鉴别能力都一致。
+
+除了Rasch和三参数，还有常见的双参数比率对数模型，其令$c_j=0$而保留$a_j$和$b_j$作参数。
+
+## PCM (Partial Credit Model) & RSM (Rating Scale Model)
+
+用来衡量多指标而非0-1指标的量表。其仍为单模型参数的（one model-wide discrimination parameter），即用单个参数描述项目难度。因此，他们也可视作 Rasch 型的模型。
+
+## GRM (Graded Response Model) & GPCM (Generalized Partial Credit Model)
+
+他们是双参数模型，是 non-Rasch 的。
+
+See [How should we select between various Item Response Theory Models? (E.g. RSM, GRM, LRSM, PCM)](https://stats.stackexchange.com/questions/402440/how-should-we-select-between-various-item-response-theory-models-e-g-rsm-grm)
+
+## MFRM (Multi-Facet Rasch Model)
+
+放弃单维能力假设，即将其他因素考虑到量表中，包括评分员打分严厉度、评分员一致性等等。
+
+## Model Testing
+
+### Fitness
+
+在Rasch的集成软件中（如Winsteps），拟合度通常由 Outfit Mean Square (Outfit MNSQ) 和 Infit Mean Square (Infit MNSQ) 两个指标指示。
+
+-   Outfit MNSQ 是残差的均方，对极端值（异常数据）比较敏感。
+-   Infit MNSQ 则是加权（以方差为加权系数）后的残差均方，对题目难度与个体能力水平相当的数据较为敏感。
+
+得到的结果为$(0,+\infty)$的数，$1$是拟合理想值，可接受的范围是$(0.5,1.5)$ [O'Connor et al., 2016]。
+
+拟合度不好：可能存在其他变量造成干扰，或对所测量的特质不恰当。
+
+### Reliability & Separation
+
+可靠性或信度分为个体可靠性（被试的能力是否具有异质性，即个体是否能代表不一样的能力）和试题可靠性（是否能靠试题区分不同能力的被试者），$1$是理想值，一般可接受范围：个体$>.8$，试题$>.9$。
+
+区分度也分个体区分度（选取的样本分离程度）和试题区分度（题目具有难度差异），一般要求个体$>2$，试题$>4$。
+
+### 单一维度假设&局部独立假设
+
+单一维度假设：量表问题具有一维性，即量表反映的是同一个潜在变量（这个假设在多面模型中是否还需要检验？）三个维度：
+
+-   首成分残差特征值\<3
+-   首成分残差\<.15
+-   由量表解释的原始方差\>.4
+
+局部独立假设：问题之间的残差相关性应为0，即问题只通过待测的潜在特质相关联。判定：标准化残差\<.3
+
+### 类别设置分析
+
+### 试题差异
+
+被试者和试题差异应相当。怀特图检验。

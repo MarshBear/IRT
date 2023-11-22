@@ -1,0 +1,211 @@
+# PCM (Partial Credit Model) 做等值
+
+## 准备工作：读取数据和R语言包
+首先读取数据和必要的R语言包（package）。我们要用到`mirt`包做GRM模型，下述语句为判断当前R环境中是否已经安装`mirt`包，若未安装则执行安装语句。
+```{r, message=FALSE, results='hide'}
+list.of.packages <- c("mirt")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, repos = "http://cran.us.r-project.org")
+lapply(list.of.packages, library, character.only = TRUE)
+```
+
+以下读取数据，数据为当前工作目录下的`正式测试/score.csv`文件，其中：该文件包含17列数据，第1列为学生序号，第2-5列、6-9列、10-13列、14-17列分别表示前测、两次中测和后测的数据，列名如`S2T3`表示第2次测试（中测1）的第3题的得分结果，数据包含40行（除去标题行）代表40个被测学生。最后，用变量`score.pre`，`score.mid1`,`score.mid2`和`score.post`分离四组数据。为方便起见，将列名都改为`T1`-`T4`。
+
+```{r}
+score <- read.csv('正式测试/score.csv')
+score.pre <- score[,2:5]
+score.mid1 <- score[,6:9]
+score.mid2 <- score[,10:13]
+score.post <- score[,14:17]
+names(score.pre) <- c("T1", "T2", "T3", "T4")
+names(score.mid1) <- c("T1", "T2", "T3", "T4")
+names(score.mid2) <- c("T1", "T2", "T3", "T4")
+names(score.post) <- c("T1", "T2", "T3", "T4")
+```
+
+读取第二个文件`正式测试/linking.csv`为量表等值数据，由于前测和两次中测分别采用了3张问卷因此需要同一水平的被试同时做3张问卷的得分数据，此即为该文件所包含的。该文件包含13列数据，第1列为被试序号，第2-5列、6-9列、10-13列分别表示3张问卷的得分数据，数据包含20行（除去标题行）代表20个被测学生。最后，用变量`linking.q1`，`linking.q2`,`score.mid2`和`linking.q3`分离三组数据。
+
+```{r}
+linking <- read.csv('正式测试/linking.csv')
+linking.q1 <- linking[,2:5]
+linking.q2 <- linking[,6:9]
+linking.q3 <- linking[,10:13]
+names(linking.q1) <- c("T1", "T2", "T3", "T4")
+names(linking.q2) <- c("T1", "T2", "T3", "T4")
+names(linking.q3) <- c("T1", "T2", "T3", "T4")
+```
+
+
+
+## 模型构建：使用`mirt`函数构建PCM
+
+对于pre和post，由于使用了同一张测试卷，故将两组数据合并并统一调用PCM。
+
+```{r}
+score.prenpost <- rbind(score.pre, score.post)
+```
+
+由于对`linking`中的数据，之后也要构建同样的模型，因此将对应的`score`和`linking`数据也合并到一起，方便后续模型构建。此时，`bind.q1`包含100行数据（前测40+后测40+linking20），`bind.q2`和`bind.q3`包含60行数据。
+
+```{r}
+bind.q1 <- rbind(score.prenpost, linking.q1)
+bind.q2 <- rbind(score.mid1, linking.q2)
+bind.q3 <- rbind(score.mid2, linking.q3)
+```
+
+每个表增加几个对照值
+
+```{r}
+empty.q <- data.frame(T1=c(0,3),T2=c(0,3),T3=c(0,3),T4=c(0,3))
+bind.q1 <- rbind(bind.q1, empty.q)
+bind.q2 <- rbind(bind.q2, empty.q)
+bind.q3 <- rbind(bind.q3, empty.q)
+```
+
+调用`mirt`函数构造PCM模型，并提取被试参数以及模型参数。
+
+```{r, message=FALSE, results='hide'}
+pcm.q1 <- mirt(data = bind.q1, itemtype = rep("Rasch",4))
+pcm.q2 <- mirt(data = bind.q2, itemtype = rep("Rasch",4))
+pcm.q3 <- mirt(data = bind.q3, itemtype = rep("Rasch",4))
+theta.q1 <- fscores(pcm.q1) # 被试参数估计
+theta.q2 <- fscores(pcm.q2)
+theta.q3 <- fscores(pcm.q3)
+coef.q1 <- coef(pcm.q1, IRTpars=T)  # 项目参数估计
+coef.q2 <- coef(pcm.q2, IRTpars=T)
+coef.q3 <- coef(pcm.q3, IRTpars=T)
+```
+
+随后按照不同的测试组分离上一步整合的被试参数，即将四次测试和三次linking测试的被试参数分离开来存储于7个不同的变量中。
+
+```{r}
+theta.pre <- theta.q1[1:40]
+theta.post <- theta.q1[41:80]
+theta.link.q1 <- theta.q1[81:100]
+theta.mid1 <- theta.q2[1:40]
+theta.link.q2 <- theta.q2[41:60]
+theta.mid2 <- theta.q3[1:40]
+theta.link.q3 <- theta.q3[41:60]
+```
+
+## 等值过程：使用$\theta$关联做均值/标准差联结
+
+
+### 理论说明
+
+模型具有如下性质：对于GRM中的所有参数，统一做线性变换后模型保持一致。即对于
+
+$$
+p^*_{jk}(\theta_i;a_{j},b_{jk})=\frac{\exp\{Da_j(\theta_i-b_{jk})\}}{1+\exp\{Da_j(\theta_i-b_{jk})\}}
+$$
+若考虑线性变换（*这里有点问题，等我翻下书，Jun 30留言*）
+$$
+a_j^*=Aa_j,\\
+b_{jk}^*=Ab_{jk}+B,\\
+\theta_i^*=A\theta_i+B,
+$$
+则上述模型等式仍成立。因此对于两个用来linking的量表I和J，估计出来了的数据$\theta_{Ii}, a_{Ij}, b_{Ijk}$和$\theta_{Ji}, a_{Jj}, b_{Jjk}$之后，他们之间的关系是：被测的能力参数$\theta_i$应当是相同的。因此，我们考虑在量表$J$上作线性变换，即求出上述的$A,B$，进而将量表$J$中的所有参数转换到和量表$I$上一致，且满足转换后的$\theta^*_J$参数和$\theta_I$是相等的。
+
+如果有两个被测$i=1,2$，我们让他们做$I$表和$J$表，进而求出他们在$I$表上的表现$\theta_{1I},\theta_{1J}$和在$J$表上的表现$\theta_{2I},\theta_{2J}$则考虑线性变换
+$$
+\theta_{1J}^*=A\theta_{1J}+B,\\
+\theta_{2J}^*=A\theta_{2J}+B,
+$$
+我们应当保证
+$$
+\theta_{1J}^*=\theta_{1I},\\
+\theta_{2J}^*=\theta_{2I}
+$$
+于是即有方程组
+$$
+A\theta_{1J}+B=\theta_{1I},\\
+A\theta_{2J}+B=\theta_{2I}
+$$
+可以解得
+$$
+A = \frac{\theta_{1I}-\theta_{2I}}{\theta_{1J}-\theta_{2J}},\\
+B = \theta_{1I}-A\theta_{1J}.
+$$
+当然，如果有多组数据$i=1,2,\cdots,N$，我们不能仅仅随意地取两组数据$i=i_1,i_2$就去解方程算$A,B$，而是应当充分利用数据。于是在统计上，可以用如下公式去估计$A,B$
+$$
+A = \frac{\sigma(\theta_I)}{\sigma(\theta_J)},\\
+B = \mu(\theta_I)-A\mu(\theta_J).
+$$
+计算出$A,B$后，我们就可以把$J$表的所有参数$\theta_{Ji},a_{Jj},b_{Jjk}$通过线性变换转换成和$I$表一致的参数$\theta^*_{Ji},a^*_{Jj},b^*_{Jjk}$，进而可以直接数值上进行比较。
+
+### 实操过程
+
+按公式计算三组linking数据的均值和方差，并代入公式算卷2到卷1、卷3到卷1的联结参数，目的是将所有的卷子都联结到卷1上。
+
+```{r}
+sigma1 <- sd(theta.link.q1)
+sigma2 <- sd(theta.link.q2)
+sigma3 <- sd(theta.link.q3)
+
+mu1 <- mean(theta.link.q1)
+mu2 <- mean(theta.link.q2)
+mu3 <- mean(theta.link.q3)
+
+A2 <- sigma1/sigma2
+B2 <- mu1 - A2*mu2
+A3 <- sigma1/sigma3
+B3 <- mu1 - A3*mu3
+```
+
+将上述算出来的数据代入线性变换的公式，计算四组测试组的被测数据theta联结到卷1中。
+
+```{r}
+theta.pre.linked <- theta.pre
+theta.mid1.linked <- A2 * theta.mid1 + B2
+theta.mid2.linked <- A3 * theta.mid2 + B3
+theta.post.linked <- theta.post
+```
+
+将结果写入`正式测试/result.csv`文件中，结束。
+```{r}
+grm.theta <- cbind(theta.pre.linked, theta.mid1.linked, theta.mid2.linked, theta.post.linked)
+write.csv(grm.theta, "正式测试/result.csv")
+```
+
+## 单个能力分开做等值
+```{r}
+pcm_equ <-function(data1, data2, data3){
+  pcm.1 <- mirt(data = data.frame(T1=data1, T2=data1), itemtype = rep("Rasch",2))
+  pcm.2 <- mirt(data = data.frame(T1=data2, T2=data2), itemtype = rep("Rasch",2))
+  pcm.3 <- mirt(data = data.frame(T1=data3, T2=data3), itemtype = rep("Rasch",2))
+  theta.1 <- fscores(pcm.1) # 被试参数估计
+  theta.2 <- fscores(pcm.2)
+  theta.3 <- fscores(pcm.3)
+  theta.pr <- theta.1[1:40]
+  theta.pos <- theta.1[41:80]
+  theta.link.1 <- theta.1[81:100]
+  theta.mi1 <- theta.2[1:40]
+  theta.link.2 <- theta.2[41:60]
+  theta.mi2 <- theta.3[1:40]
+  theta.link.3 <- theta.3[41:60]
+  sig1 <- sd(theta.link.1)
+  sig2 <- sd(theta.link.2)
+  sig3 <- sd(theta.link.3)
+  m1 <- mean(theta.link.1)
+  m2 <- mean(theta.link.2)
+  m3 <- mean(theta.link.3)
+  a2 <- sig1/sig2
+  b2 <- m1 - a2*m2
+  a3 <- sig1/sig3
+  b3 <- m1 - a3*m3
+  theta.pre.led <- theta.pr
+  theta.mid1.led <- a2 * theta.mi1 + b2
+  theta.mid2.led <- a3 * theta.mi2 + b3
+  theta.post.led <- theta.pos
+  grm.t <- cbind(theta.pre.led, theta.mid1.led, theta.mid2.led, theta.post.led)
+  return(grm.t)
+}
+```
+```{r}
+grm.theta.t1 <- pcm_equ(bind.q1$T1, bind.q2$T1, bind.q3$T1)
+grm.theta.t2 <- pcm_equ(bind.q1$T2, bind.q2$T2, bind.q3$T2)
+grm.theta.t3 <- pcm_equ(bind.q1$T3, bind.q2$T3, bind.q3$T3)
+grm.theta.t4 <- pcm_equ(bind.q1$T4, bind.q2$T4, bind.q3$T4)
+theta.total <- cbind(grm.theta,grm.theta.t1,grm.theta.t2,grm.theta.t3,grm.theta.t4)
+write.csv(theta.total, "正式测试/result_total.csv")
+```
